@@ -65,7 +65,7 @@ func GetRepository(client *api.GraphQLClient, repository string) Repository {
 	return query.Repository
 }
 
-type PullRequest struct {
+type RawPullRequest struct {
 	ID          string `json:"id" graphql:"id"`
 	Title       string `json:"title" graphql:"title"`
 	URL         string `json:"url" graphql:"url"`
@@ -75,6 +75,19 @@ type PullRequest struct {
 	Author      struct {
 		Login string `json:"login" graphql:"login"`
 	} `json:"author" graphql:"author"`
+	Reviews struct {
+		Nodes []struct {
+			State  githubv4.PullRequestReviewState `graphql:"state"`
+			Author struct {
+				Login string `graphql:"login"`
+			} `graphql:"author"`
+		} `graphql:"nodes"`
+	} `graphql:"reviews(first: 100)"`
+}
+
+type PullRequest struct {
+	RawPullRequest
+	IsApproved bool `json:"isApproved"`
 }
 
 type Options struct {
@@ -89,7 +102,7 @@ func GetPullRequests(client *api.GraphQLClient, owner string, name string, state
 	var query struct {
 		Repository struct {
 			PullRequests struct {
-				Nodes    []PullRequest
+				Nodes    []RawPullRequest
 				PageInfo struct {
 					HasNextPage bool   `graphql:"hasNextPage"`
 					EndCursor   string `graphql:"endCursor"`
@@ -113,7 +126,12 @@ func GetPullRequests(client *api.GraphQLClient, owner string, name string, state
 			log.Fatal(err)
 		}
 
-		pullRequests = append(pullRequests, query.Repository.PullRequests.Nodes...)
+		for _, pr := range query.Repository.PullRequests.Nodes {
+			pullRequests = append(pullRequests, PullRequest{
+				RawPullRequest: pr,
+				IsApproved:     isApproved(pr.Reviews.Nodes),
+			})
+		}
 
 		if query.Repository.PullRequests.PageInfo.HasNextPage {
 			variables["after"] = graphql.String(query.Repository.PullRequests.PageInfo.EndCursor)
@@ -131,6 +149,21 @@ func GetPullRequests(client *api.GraphQLClient, owner string, name string, state
 	}
 
 	return pullRequests
+}
+
+func isApproved(reviews []struct {
+	State  githubv4.PullRequestReviewState `graphql:"state"`
+	Author struct {
+		Login string `graphql:"login"`
+	} `graphql:"author"`
+}) bool {
+	for _, review := range reviews {
+		if review.State == githubv4.PullRequestReviewStateApproved {
+			return true
+		}
+	}
+
+	return false
 }
 
 func filterDrafts(pullRequests []PullRequest) []PullRequest {
