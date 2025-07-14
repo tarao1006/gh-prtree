@@ -58,14 +58,29 @@ func buildGraph(repository Repository, pullRequests []PullRequest) Graph {
 	return graph
 }
 
+var (
+	branchNodeColor       = "#e1f5fe"
+	branchNodeStrokeColor = "#0277bd"
+
+	prNodeColor       = "#ffffff"
+	prNodeStrokeColor = "#000000"
+
+	approvedNodeColor       = "#e8f5e8"
+	approvedNodeStrokeColor = "#2e7d32"
+)
+
 func generateMermaid(graph Graph) string {
 	var builder strings.Builder
 
 	builder.WriteString("graph TD\n")
 
-	builder.WriteString(fmt.Sprintf("    %s[\"%s\"]:::prNode\n", graph.DefaultBranch, graph.DefaultBranch))
+	builder.WriteString(fmt.Sprintf("    %s[\"%s\"]:::branchNode\n", graph.DefaultBranch, graph.DefaultBranch))
 	for _, edge := range graph.Edges {
-		builder.WriteString(fmt.Sprintf("    %s[\"%s\"]:::prNode\n", edge.PR.ID, edge.PR.Title))
+		class := "prNode"
+		if edge.PR.IsApproved {
+			class = "approvedNode"
+		}
+		builder.WriteString(fmt.Sprintf("    %s[\"%s\"]:::%s\n", edge.PR.ID, edge.PR.Title, class))
 	}
 	builder.WriteString("\n")
 
@@ -94,6 +109,11 @@ func generateMermaid(graph Graph) string {
 		builder.WriteString(fmt.Sprintf("    click %s \"%s\"\n", edge.PR.ID, edge.PR.URL))
 	}
 
+	builder.WriteString("\n")
+	builder.WriteString(fmt.Sprintf("    classDef branchNode fill:%s,stroke:%s,stroke-width:2px\n", branchNodeColor, branchNodeStrokeColor))
+	builder.WriteString(fmt.Sprintf("    classDef prNode fill:%s,stroke:%s,stroke-width:2px\n", prNodeColor, prNodeStrokeColor))
+	builder.WriteString(fmt.Sprintf("    classDef approvedNode fill:%s,stroke:%s,stroke-width:2px\n", approvedNodeColor, approvedNodeStrokeColor))
+
 	return builder.String()
 }
 
@@ -108,28 +128,48 @@ func generateGraphViz(graph Graph) string {
 	builder.WriteString("digraph PRGraph {\n")
 	builder.WriteString("    rankdir=TB;\n")
 	builder.WriteString("    node [shape=box, style=filled];\n")
-	builder.WriteString("    edge [fontsize=10];\n")
 	builder.WriteString("\n")
 
-	builder.WriteString(fmt.Sprintf("    \"%s\" [fillcolor=lightblue, fontweight=bold];\n", graph.DefaultBranch))
-
-	for name, node := range graph.Nodes {
-		if name != graph.DefaultBranch {
-			builder.WriteString(fmt.Sprintf("    \"%s\" [fillcolor=lightgray];\n", node.Name))
-		}
-	}
-	builder.WriteString("\n")
+	builder.WriteString(fmt.Sprintf("    \"%s\" [fillcolor=\"%s\", color=\"%s\", fontweight=bold];\n", graph.DefaultBranch, branchNodeColor, branchNodeStrokeColor))
 
 	for _, edge := range graph.Edges {
 		title := edge.PR.Title
 		title = strings.ReplaceAll(title, "\"", "\\\"")
 		title = strings.ReplaceAll(title, "\n", "\\n")
 
-		label := fmt.Sprintf("PR: %s\\nAuthor: %s", title, edge.PR.Author.Login)
+		color := prNodeStrokeColor
+		fillColor := prNodeColor
+		if edge.PR.IsApproved {
+			color = approvedNodeStrokeColor
+			fillColor = approvedNodeColor
+		}
 
-		builder.WriteString(fmt.Sprintf("    \"%s\" -> \"%s\" [label=\"%s\", URL=\"%s\"];\n",
-			edge.From, edge.To, label, edge.PR.URL))
+		builder.WriteString(fmt.Sprintf("    \"%s\" [fillcolor=\"%s\", color=\"%s\", label=\"%s\", URL=\"%s\"];\n",
+			edge.PR.ID, fillColor, color, title, edge.PR.URL))
 	}
+	builder.WriteString("\n")
+
+	for _, edge := range graph.Edges {
+		if edge.To == graph.DefaultBranch {
+			builder.WriteString(fmt.Sprintf("    \"%s\" -> \"%s\";\n", edge.PR.ID, graph.DefaultBranch))
+		}
+	}
+
+	for _, edge1 := range graph.Edges {
+		for _, edge2 := range graph.Edges {
+			if edge1.PR.ID == edge2.PR.ID {
+				continue
+			}
+			if edge1.From == edge2.To && edge1.To == edge2.From {
+				continue
+			}
+
+			if edge2.To == edge1.From {
+				builder.WriteString(fmt.Sprintf("    \"%s\" -> \"%s\";\n", edge2.PR.ID, edge1.PR.ID))
+			}
+		}
+	}
+
 	builder.WriteString("}\n")
 
 	return builder.String()
